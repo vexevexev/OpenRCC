@@ -8,5 +8,19 @@
 		'OpenACD'
 	]},
 	{mod, {open_rcc_app, []}},
-	{env, []}
+	{env, 
+		[
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%% This is an example on how to use ORCC with https. %%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%%		{use_https, true},
+%%		{key_file, "./plugin.d/open_rcc/priv/server_key.pem"},
+%%		{cert_file, "./plugin.d/open_rcc/priv/server_cert.pem"},
+%%		{orcc_password, "jackalope"}
+%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%% This is an example on how to use ORCC with https. %%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		]}
 ]}.
