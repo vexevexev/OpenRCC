@@ -100,12 +100,43 @@ init([Agent]) ->
 handle_cast(stop, #state{agent_pid=Pid}=State) ->
     agent:stop(Pid),
     {stop, normal, State};
-handle_cast(Msg, State) ->
-    ?DEBUG("Got cast message ~p; State=~p. Ignoring...", [Msg, State]),
+
+handle_cast(Msg, #state{agent_pid=Pid} = State) ->
+	case Msg of
+		{change_state,wrapup, #call{id=OriginalCall}} ->
+			case {application:get_env(open_rcc, autoend_wrapup),application:get_env(open_rcc, autoend_wrapup_time_ms)} of
+				{{ok, true}, {ok, Time}} ->
+					?DEBUG("Got cast message ~p; State=~p. ~nAuto-ending wrapup in ~p milliseconds...", [Msg, State, Time]),
+					spawn(
+					  	fun() -> 
+							timer:sleep(Time),	
+							#agent{statedata=Call} = agent:dump_state(Pid),
+							#call{id=UpdatedCall} = Call,
+							
+							case erlang:is_list(UpdatedCall) of
+								true ->
+									case string:equal(UpdatedCall, OriginalCall) of
+										true ->
+											#agent{connection=CPid} = agent:dump_state(Pid),
+											agent_connection:set_state(CPid, idle);
+										false ->
+											ok
+									end;
+								false ->
+									ok
+							end
+						end);
+				_Else ->
+					ok
+			end;
+		_Else -> 
+    		?DEBUG("Got cast message ~p; State=~p. ~nIgnoring...", [Msg, State]),
+			ok
+	end,
     {noreply, State}.
 
 handle_info(Msg, State) ->
-    ?DEBUG("Got info message ~p; State=~p. Ignoring...", [Msg, State]),
+    ?DEBUG("Got info message ~p; State=~p. ~nIgnoring...", [Msg, State]),
     {noreply, State}.
 
 handle_call(get_agentpid, _From, #state{agent_pid=Pid}=State) ->

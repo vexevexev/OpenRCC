@@ -116,7 +116,7 @@ mochiweb_loop_http(Req) ->
 		%% clear way how to check PIDs on remote node
 		exit:{noproc, _Rest} ->
 			Req:respond({200, [{"Content-Type", "application/json"}], 
-						 encode_response(<<"false">>, <<"Invalid PID or Agent process has died.">>)})
+						 encode_response(<<"false">>, <<"Invalid PID, Agent process has died, or Invalid parameters.">>)})
 	end.
 
 mochiweb_loop_https(Req) ->
@@ -697,7 +697,9 @@ handle_request("/toggle_hold", QueryString, Req) ->
 		undefined ->
 			Req:respond(?RESP_AGENT_NOT_LOGGED);
 		Pid ->
-			execute_media(Pid, cast, toggle_hold),
+			#agent{statedata=Call} = agent:dump_state(Pid),
+			#call{source=MPid} = Call,
+			freeswitch_media:toggle_hold(MPid),
 			Req:respond(?RESP_SUCCESS)
 	end;
 
@@ -720,9 +722,10 @@ handle_request("/contact_3rd_party", QueryString, Req) ->
 			Req:respond(?RESP_AGENT_NOT_LOGGED);
 		Pid ->
 			Dest = proplists:get_value("dest", QueryString, unspecified_destination),
+			Profile = proplists:get_value("profile", QueryString, "default"),
 			#agent{statedata=Call} = agent:dump_state(Pid),
 			#call{source=MPid} = Call,
-		freeswitch_media:contact_3rd_party(MPid, Dest),
+			freeswitch_media:contact_3rd_party(MPid, Dest, '3rd_party', Profile),
 			Req:respond(?RESP_SUCCESS)
 	end;
 
@@ -751,6 +754,29 @@ handle_request("/merge_all", QueryString, Req) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Merge Only 3rd Party, Place only 3rd party in conference
+%%	HTTP request: 
+%%			 <server:port>/merge_only_3rd_party?agent=<agent name>
+%%			 <server:port>/merge_only_3rd_party?agent_pid=<agent pid>
+%%		<agent name> - is an agent name
+%%		<agent pid> - is agent pid
+%%	The method can return:
+%%		200 OK - JSON object contains execution result in 'success' field 
+%% @end
+%%--------------------------------------------------------------------  
+handle_request("/merge_only_3rd_party", QueryString, Req) ->
+	case get_agentpid(QueryString) of
+		undefined ->
+			Req:respond(?RESP_AGENT_NOT_LOGGED);
+		Pid ->
+			#agent{statedata=Call} = agent:dump_state(Pid),
+			#call{source=MPid} = Call,
+			freeswitch_media:merge_only_3rd_party(MPid),
+			Req:respond(?RESP_SUCCESS)
+	end;
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Ends a conference assotiated with the agent and drops all active calls 
 %% within the conference
 %%	HTTP request: 
@@ -767,8 +793,68 @@ handle_request("/end_conference", QueryString, Req) ->
 		undefined ->
 			Req:respond(?RESP_AGENT_NOT_LOGGED);
 		Pid ->
-			execute_media(Pid, call, end_conference),
+			#agent{statedata=Call} = agent:dump_state(Pid),
+			#call{source=MPid} = Call,
+			freeswitch_media:end_conference(MPid),
 			Req:respond(?RESP_SUCCESS)
+	end;
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gets the status of the conference of a given agent.
+%%	HTTP request: 
+%%			 <server:port>/conference_status?agent=<agent name>
+%%			 <server:port>/conference_status?agent_pid=<agent pid>
+%%		<agent name> - is an agent name
+%%		<agent pid> - is agent pid
+%%	The method can return:
+%%		200 OK - JSON object contains execution result in 'success' field 
+%%				 and the status of the conference.
+%% @end
+%%--------------------------------------------------------------------  
+handle_request("/conference_status", QueryString, Req) ->
+	case get_agentpid(QueryString) of 
+		undefined ->
+			Req:respond(?RESP_AGENT_NOT_LOGGED);
+		Pid ->
+			#agent{statedata=Call} = agent:dump_state(Pid),
+			#call{source=MPid} = Call,
+			{ok, {_ConferenceID, ConferenceData}} = freeswitch_media:conference_status(MPid),
+			NewConferenceData = [encode_status(X) || X <- ConferenceData],
+			JSON = encode_response(<<"true">>, [ { return, NewConferenceData } ]),
+			Req:respond({200, [{"Content-Type", "application/json"}], JSON})
+	end;
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Kicks the given ID out of the given agent's conference.
+%%	HTTP request: 
+%%			 <server:port>/conference_kick?agent=<agent name>&id=<id>
+%%			 <server:port>/conference_kick?agent_pid=<agent pid>&id=<id>
+%%		<agent name> - is an agent name
+%%		<agent pid> - is agent pid
+%%		<id> - is the ID of the conference member to kick.
+%%	The method can return:
+%%		200 OK - JSON object contains execution result in 'success' field and
+%%					  a message describing the failure if there is one.
+%% @end
+%%--------------------------------------------------------------------  
+handle_request("/conference_kick", QueryString, Req) ->
+	case get_agentpid(QueryString) of 
+		undefined ->
+			Req:respond(?RESP_AGENT_NOT_LOGGED);
+		Pid ->
+			ID = proplists:get_value("id", QueryString),
+			case ID of
+				undefined ->
+					JSON = encode_response(<<"false">>, <<"Undefined client ID number.">>),
+					Req:respond({200, [{"Content-Type", "application/json"}], JSON});
+				ValidID ->
+					#agent{statedata=Call} = agent:dump_state(Pid),
+					#call{source=MPid} = Call,
+					freeswitch_media:conference_kick(MPid, ValidID),
+					Req:respond(?RESP_SUCCESS)
+			end
 	end;
 
 %%--------------------------------------------------------------------
@@ -788,7 +874,9 @@ handle_request("/hangup_3rd_party", QueryString, Req) ->
 		undefined ->
 			Req:respond(?RESP_AGENT_NOT_LOGGED);
 		Pid ->
-			execute_media(Pid, cast, hangup_3rd_party),
+			#agent{statedata=Call} = agent:dump_state(Pid),
+			#call{source=MPid} = Call,
+			freeswitch_media:hangup_3rd_party(MPid),
 			Req:respond(?RESP_SUCCESS)
 	 end;
 
@@ -998,18 +1086,6 @@ relase_opt_record_to_proplist(#release_opt{} = Rec) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Execute a command on gen_media/freeswitch_media process. Type defines a call type: call or cast
-%% @end
-%%--------------------------------------------------------------------
-execute_media(#call{source=Pid}=Call, call, Cmd) when is_record(Call, call) ->
-	gen_media:call(Pid, Cmd);
-execute_media(#call{source=Pid}=Call, cast, Cmd) when is_record(Call, call) ->
-	gen_media:cast(Pid, Cmd);
-execute_media(Pid, Type, Cmd) when is_pid(Pid) ->
-	#agent{statedata=Call} = agent:dump_state(Pid),
-	execute_media(Call, Type, Cmd).
-%%--------------------------------------------------------------------
-%% @doc
 %% Convert terms into binary format. 
 %% List, Atom, Pid, Integer and Binary are supported for now
 %% @end
@@ -1035,3 +1111,11 @@ to_pid(Var) when is_list(Var) ->
 	list_to_pid(Var);
 to_pid(Var) when is_pid(Var) ->
 	Var.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Encode conference status. Used by handle_request/3
+%% @end
+%%--------------------------------------------------------------------
+encode_status(ConferenceStatus) ->
+  [{X,erlang:list_to_binary(Y)} || {X, Y} <- ConferenceStatus].
